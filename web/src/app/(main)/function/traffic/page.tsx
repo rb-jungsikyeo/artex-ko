@@ -462,7 +462,7 @@ export default function TrafficPage() {
           </PopoverContent>
         </Popover>
         <div className="relative w-48">
-          <Input placeholder="host…" value={host} onChange={(e) => setHost(e.target.value)} className="h-8" />
+          <Input placeholder="호스트…" value={host} onChange={(e) => setHost(e.target.value)} className="h-8" />
         </div>
         <Button
           variant="destructive"
@@ -654,9 +654,9 @@ export default function TrafficPage() {
                     onSort={toggleSort}
                     className="w-36"
                   />
-                  <TableHead className="w-44">host</TableHead>
+                  <TableHead className="w-44">호스트</TableHead>
                   <TableHead className="w-20">{t("table.method")}</TableHead>
-                  <TableHead>URL</TableHead>
+                  <TableHead>주소</TableHead>
                   <SortableHead
                     field="status"
                     label={t("table.status")}
@@ -665,7 +665,7 @@ export default function TrafficPage() {
                     onSort={toggleSort}
                     className="w-20"
                   />
-                  <TableHead className="w-36">content-type</TableHead>
+                  <TableHead className="w-36">콘텐츠 유형</TableHead>
                   <SortableHead
                     field="resp_len"
                     label={t("table.respLen")}

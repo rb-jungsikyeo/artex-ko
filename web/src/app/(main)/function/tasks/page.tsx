@@ -984,7 +984,7 @@ export default function TasksPage() {
                       align="right"
                       onSort={sortTasksBy}
                     />
-                    <TableHead className="text-right">Token</TableHead>
+                    <TableHead className="text-right">토큰</TableHead>
                     <TableHead className="sticky right-0 z-10 bg-card text-right shadow-[-1px_0_0_0_hsl(var(--border))]">
                       {t("table.actions")}
                     </TableHead>

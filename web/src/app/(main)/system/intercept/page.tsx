@@ -22,6 +22,18 @@ import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import type { InterceptAction, InterceptRule, JudgeConfig, LLMProfile, Tool } from "@/lib/types";
 
+const HAN_TEXT = /[\u3400-\u9fff]/;
+
+function visibleRuleName(name: string): string {
+  if (!HAN_TEXT.test(name)) return name;
+  if (name.includes("rm -rf")) return "[기본 제공] 재귀 강제 삭제 차단(rm -rf)";
+  return "[기본 제공] 위험 명령 차단 규칙";
+}
+
+function visibleRuleMessage(message: string): string {
+  return HAN_TEXT.test(message) ? "안전을 위해 위험한 요청을 차단했습니다." : message;
+}
+
 // ---- tool scope ----
 
 // SDK tools are intentionally not seeded into the DB (they apply to every agent
@@ -395,14 +407,14 @@ export default function InterceptPage() {
   function openEdit(rule: InterceptRule) {
     setEditing(rule);
     setForm({
-      name: rule.name,
+      name: visibleRuleName(rule.name),
       enabled: rule.enabled,
       priority: rule.priority,
       match_target: rule.match_target,
       match_type: rule.match_type,
       pattern: rule.pattern,
       action: rule.action,
-      message: rule.message,
+      message: visibleRuleMessage(rule.message),
       timeout_enabled: rule.timeout_enabled,
       timeout_seconds: rule.timeout_seconds,
       timeout_action: rule.timeout_action,
@@ -622,7 +634,7 @@ export default function InterceptPage() {
                         <TableCell>
                           <span className="font-mono text-xs tabular-nums">{rule.priority}</span>
                         </TableCell>
-                        <TableCell className="font-medium text-sm">{rule.name}</TableCell>
+                        <TableCell className="font-medium text-sm">{visibleRuleName(rule.name)}</TableCell>
                         <TableCell>
                           <span className="text-xs text-muted-foreground">
                             {rule.match_target === "tool_name" ? t("target.tool_name") : t("target.tool_input")}

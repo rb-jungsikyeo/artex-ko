@@ -213,7 +213,7 @@ func (s *Server) seedFindingRetester() error {
 			return err
 		}
 	}
-	const flag = "finding_retester_seed_v1"
+	const flag = "finding_retester_seed_v2_ko"
 	tx, err := s.m.pg.Begin()
 	if err != nil {
 		return err
@@ -233,19 +233,32 @@ func (s *Server) seedFindingRetester() error {
 	}
 	var id int64
 	err = tx.QueryRow(`INSERT INTO agents(key,name,description,role,builtin,enabled)
-	VALUES ($1,'漏洞复测','从漏洞详情手动启动，读取原证据并保存独立复测结论。','assistant',false,true)
-	ON CONFLICT (key) DO NOTHING RETURNING id`, db.FindingRetestAgentKey).Scan(&id)
+	VALUES ($1,'취약점 재검증','취약점 상세 화면에서 수동으로 시작하며, 기존 증거를 읽고 독립적인 재검증 결론을 저장합니다.','assistant',false,true)
+	ON CONFLICT (key) DO UPDATE SET name=EXCLUDED.name, description=EXCLUDED.description
+	RETURNING id`, db.FindingRetestAgentKey).Scan(&id)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if id > 0 {
-		var pid int64
-		if err = tx.QueryRow(`INSERT INTO agent_prompts(agent_id,version,template_text,note,updated_by)
-		VALUES ($1,1,$2,'内置默认','system') RETURNING id`, id, agent.RetesterDefaultPrompt).Scan(&pid); err != nil {
+		var currentPromptID sql.NullInt64
+		if err = tx.QueryRow(`SELECT current_prompt_id FROM agents WHERE id=$1`, id).Scan(&currentPromptID); err != nil {
 			return err
 		}
-		if _, err = tx.Exec(`UPDATE agents SET current_prompt_id=$1 WHERE id=$2`, pid, id); err != nil {
-			return err
+		if currentPromptID.Valid {
+			if _, err = tx.Exec(`UPDATE agent_prompts
+			SET template_text=$1, note='기본 제공', updated_by='system'
+			WHERE id=$2 AND template_text LIKE '你是授权渗透测试系统的「漏洞复测」Agent%'`, agent.RetesterDefaultPrompt, currentPromptID.Int64); err != nil {
+				return err
+			}
+		} else {
+			var pid int64
+			if err = tx.QueryRow(`INSERT INTO agent_prompts(agent_id,version,template_text,note,updated_by)
+			VALUES ($1,1,$2,'기본 제공','system') RETURNING id`, id, agent.RetesterDefaultPrompt).Scan(&pid); err != nil {
+				return err
+			}
+			if _, err = tx.Exec(`UPDATE agents SET current_prompt_id=$1 WHERE id=$2`, pid, id); err != nil {
+				return err
+			}
 		}
 	}
 	if _, err = tx.Exec(`INSERT INTO settings(key,value) VALUES ($1,'true') ON CONFLICT(key) DO UPDATE SET value='true'`, flag); err != nil {

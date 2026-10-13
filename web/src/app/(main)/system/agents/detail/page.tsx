@@ -26,7 +26,7 @@ function AgentDetailInner() {
           </Link>
         </Button>
         <div>
-          <h1 className="text-xl font-semibold tracking-tight">Agent</h1>
+          <h1 className="text-xl font-semibold tracking-tight">에이전트</h1>
           <p className="text-muted-foreground font-mono text-xs">{key}</p>
         </div>
       </div>

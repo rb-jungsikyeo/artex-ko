@@ -20,6 +20,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { api } from "@/lib/api";
 import type { AssetInterceptKind, AssetInterceptRule } from "@/lib/types";
 
+const HAN_TEXT = /[\u3400-\u9fff]/;
+
+function visibleRuleNote(rule: AssetInterceptRule): string {
+  if (!HAN_TEXT.test(rule.note)) return rule.note;
+  if (rule.pattern.includes(".gov")) return `[기본 제공] 정부 사이트 (${rule.pattern})`;
+  if (rule.pattern.includes(".edu")) return `[기본 제공] 교육기관 사이트 (${rule.pattern})`;
+  return "[기본 제공] 보호 대상 사이트";
+}
+
 // ---- kind 메타 정보 ----
 // label 은 assetInterceptRules.kind.* 에서, group 헤더는 assetInterceptPage.group.* 에서 해석한다.
 
@@ -126,7 +135,7 @@ export default function AssetInterceptPage() {
 
   function openEdit(rule: AssetInterceptRule) {
     setEditing(rule);
-    setForm({ enabled: rule.enabled, kind: rule.kind, pattern: rule.pattern, note: rule.note });
+    setForm({ enabled: rule.enabled, kind: rule.kind, pattern: rule.pattern, note: visibleRuleNote(rule) });
     setOpen(true);
   }
 
@@ -238,7 +247,7 @@ export default function AssetInterceptPage() {
                             {t("builtin")}
                           </Badge>
                         )}
-                        <span className="truncate">{rule.note}</span>
+                        <span className="truncate">{visibleRuleNote(rule)}</span>
                       </div>
                     </TableCell>
                     <TableCell className="text-center">

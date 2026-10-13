@@ -34,8 +34,8 @@ function Command({
 }
 
 function CommandDialog({
-  title = "Command Palette",
-  description = "Search for a command to run...",
+  title = "명령 모음",
+  description = "실행할 명령을 검색합니다.",
   children,
   className,
   showCloseButton = false,

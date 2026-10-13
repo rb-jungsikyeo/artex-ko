@@ -190,28 +190,28 @@ func intp(v int) *int { return &v }
 // 注：planner/worker/mainagent/auto 的交互式 shell 默认由下方 interactive_shell_default_v1
 // 块统一置 true（尊重后续 toggle）；这里的 interactiveShell 只给需要「建行即默认开」的新 agent。
 var builtinAgents = []builtinAgent{
-	{"goals", "目标拆解", "goals", "把渗透任务目标拆解成若干独立、可验证的子目标。", []promptVar{
-		{"EngagementDescription", "任务描述（测试对象/背景）", "测试 example.com 站点", "exploration"},
+	{"goals", "목표 분해", "goals", "침투 테스트 목표를 서로 독립적이고 검증 가능한 여러 하위 목표로 분해합니다.", []promptVar{
+		{"EngagementDescription", "작업 설명(테스트 대상/배경)", "example.com 사이트 테스트", "exploration"},
 		// Now 是全局 runtime 变量(见 server.globalPromptVars),不再在各 agent 目录里
 		// 重复定义,否则 withGlobalVars 追加时会与全局项撞名。
 	}, false, nil},
-	{"planner", "规划", "planner", "读取态势、判定目标，只在确有未覆盖的新方向时补充探索意图（每任务一个规划循环）。", []promptVar{
-		{"Goal", "任务总目标", "拿下 example.com 的管理员权限", "exploration"},
-		{"AssetSummary", "资产计数/类型分布摘要(可选)", "domain:3 ip:5 site:2", "distilled"},
+	{"planner", "계획", "planner", "현재 상황과 목표를 판단하고, 아직 다루지 않은 새로운 방향이 있을 때만 탐색 의도를 추가합니다(작업마다 계획 반복 1개).", []promptVar{
+		{"Goal", "작업 전체 목표", "example.com 관리자 권한 확보", "exploration"},
+		{"AssetSummary", "자산 수와 유형별 분포 요약(선택)", "domain:3 ip:5 site:2", "distilled"},
 	}, false, nil},
-	{"mainagent", "主", "main", "人机接口：观察进展，把人的意图落成 hint 或高优先级意图。", []promptVar{
-		{"Goal", "当前任务目标", "拿下 example.com 的管理员权限", "exploration"},
-		{"AssetSummary", "开局态势摘要(可选)", "domain:3 ip:5", "distilled"},
-		{"FindingsSummary", "已确认漏洞摘要(可选)", "high:1 medium:2", "distilled"},
+	{"mainagent", "메인", "main", "진행 상황을 살펴보고 사용자의 요청을 힌트나 높은 우선순위의 의도로 반영하는 대화형 인터페이스입니다.", []promptVar{
+		{"Goal", "현재 작업 목표", "example.com 관리자 권한 확보", "exploration"},
+		{"AssetSummary", "초기 상황 요약(선택)", "domain:3 ip:5", "distilled"},
+		{"FindingsSummary", "확인된 취약점 요약(선택)", "high:1 medium:2", "distilled"},
 	}, false, nil},
-	{"worker", "执行", "worker", "领取一条意图执行，把发现的事实/漏洞写回知识图谱后停止。", []promptVar{
-		{"ProxyAddr", "记录代理地址(驱动 if 双文案)", "127.0.0.1:8080", "runtime"},
-		{"WorkerName", "worker 自我标识(可选)", "worker-1", "runtime"},
+	{"worker", "실행", "worker", "의도 하나를 받아 실행하고 발견한 사실과 취약점을 지식 그래프에 기록한 뒤 중지합니다.", []promptVar{
+		{"ProxyAddr", "기록 프록시 주소(조건별 안내 문구에 사용)", "127.0.0.1:8080", "runtime"},
+		{"WorkerName", "작업 에이전트 자기 식별자(선택)", "worker-1", "runtime"},
 	}, false, nil},
 	// Auto:内置「平台操作」agent。不参与渗透编排循环,经对话页驱动,用工具操作平台。
-	{"auto", "Auto", "assistant", "平台操作助手：用工具管理任务(建/看/暂停/给提示)与资产，并可创建/修改 skill、自定义工具、MCP。", nil, false, nil},
+	{"auto", "자동", "assistant", "플랫폼 운영 도우미입니다. 도구로 작업 생성·조회·일시정지·힌트 제공과 자산 관리를 수행하고, 스킬·사용자 정의 도구·모델 연결 설정을 만들거나 수정할 수 있습니다.", nil, false, nil},
 	// 渗透测试:内置「独立渗透」agent。经对话页驱动,一人从侦察到收尾走完整条渗透链,自己规划自己执行自己验证。默认开启交互式 shell。
-	{"pentest", "渗透测试", "assistant", "独立渗透 agent：一人从侦察→找攻击面→深入利用→验证→收尾走完整条链，自己规划、自己执行、自己对抗式验证。", nil, true, intp(0)},
+	{"pentest", "침투 테스트", "assistant", "독립 침투 테스트 에이전트입니다. 정찰부터 공격 표면 탐색, 심층 공격, 검증, 마무리까지 전체 과정을 스스로 계획하고 실행하며 교차 검증합니다.", nil, true, intp(0)},
 }
 
 // seedBuiltins inserts the fixed built-in agents and their variable catalog (idempotent).

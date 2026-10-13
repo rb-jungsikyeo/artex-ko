@@ -24,6 +24,16 @@ import type { Agent, Tool } from "@/lib/types";
 // Traffic tools are host tools gated by the global 流量捕获 switch: bindable, but
 // only usable when capture is on. Keep in sync with traffic.SeedToolMetas.
 const TRAFFIC_TOOL_KEYS = new Set(["traffic_search", "traffic_get"]);
+const HAN_TEXT = /[\u3400-\u9fff]/;
+
+function visibleToolDescription(tool: Tool): string {
+  if (!HAN_TEXT.test(tool.description)) return tool.description;
+  return `${tool.key} 시스템 기본 도구입니다. 도구 이름과 입력 항목을 기준으로 실행됩니다.`;
+}
+
+function visibleParamDescription(description: string): string {
+  return HAN_TEXT.test(description) ? "이 입력값에 대한 시스템 설명입니다." : description;
+}
 
 // paramRows flattens schema.properties into an ordered row list for editing.
 // name/type/required are read-only (welded to the Go handler); description/default
@@ -34,6 +44,8 @@ type ParamRow = {
   type: string;
   required: boolean;
   description: string;
+  originalDescription: string;
+  descriptionDirty: boolean;
   defaultStr: string; // "" = no default declared
   scalar: boolean;
   parentKey?: string; // set when this is a sub-field of an array param's items
@@ -51,7 +63,9 @@ function toRows(schema: Record<string, any>): ParamRow[] {
       name,
       type,
       required: required.has(name),
-      description: String(p?.description ?? ""),
+      description: visibleParamDescription(String(p?.description ?? "")),
+      originalDescription: String(p?.description ?? ""),
+      descriptionDirty: false,
       defaultStr: hasDefault ? String((p as Record<string, unknown>).default) : "",
       scalar: ["string", "integer", "number", "boolean"].includes(type),
     });
@@ -69,7 +83,9 @@ function toRows(schema: Record<string, any>): ParamRow[] {
             name: subName,
             type: subType,
             required: itemRequired.has(subName),
-            description: String(subP?.description ?? ""),
+            description: visibleParamDescription(String(subP?.description ?? "")),
+            originalDescription: String(subP?.description ?? ""),
+            descriptionDirty: false,
             defaultStr: subHasDefault ? String(subP.default) : "",
             scalar: ["string", "integer", "number", "boolean"].includes(subType),
             parentKey: name,
@@ -106,7 +122,7 @@ function applyRows(schema: Record<string, any>, rows: ParamRow[]): Record<string
       const parent = props[r.parentKey] as any;
       const subP = parent?.items?.properties?.[r.name] as Record<string, unknown> | undefined;
       if (!subP) continue;
-      subP.description = r.description;
+      subP.description = r.descriptionDirty ? r.description : r.originalDescription;
       if (r.scalar) {
         const dv = coerceDefault(r.type, r.defaultStr);
         if (dv === undefined) delete subP.default;
@@ -115,7 +131,7 @@ function applyRows(schema: Record<string, any>, rows: ParamRow[]): Record<string
     } else {
       const p = props[r.name];
       if (!p) continue;
-      p.description = r.description;
+      p.description = r.descriptionDirty ? r.description : r.originalDescription;
       if (r.scalar) {
         const dv = coerceDefault(r.type, r.defaultStr);
         if (dv === undefined) delete p.default;
@@ -143,7 +159,8 @@ function ToolEditor({
   const t = useTranslations("toolsPage");
   // traffic tools can't be bound/enabled until the global 流量捕获 switch is on.
   const trafficGated = TRAFFIC_TOOL_KEYS.has(tool.key) && !captureOn;
-  const [description, setDescription] = React.useState(tool.description);
+  const [description, setDescription] = React.useState(() => visibleToolDescription(tool));
+  const [descriptionDirty, setDescriptionDirty] = React.useState(false);
   const [bound, setBound] = React.useState<string[]>(tool.agents);
   const [enabled, setEnabled] = React.useState(tool.enabled);
   const [rows, setRows] = React.useState<ParamRow[]>(() => toRows(tool.schema));
@@ -157,7 +174,7 @@ function ToolEditor({
     setSaving(true);
     try {
       await api.saveTool(tool.key, {
-        description,
+        description: descriptionDirty ? description : tool.description,
         schema: applyRows(tool.schema, rows),
         agents: bound,
         enabled,
@@ -224,7 +241,10 @@ function ToolEditor({
             className="font-mono text-xs"
             rows={6}
             value={description}
-            onChange={(e) => setDescription(e.target.value)}
+            onChange={(e) => {
+              setDescription(e.target.value);
+              setDescriptionDirty(true);
+            }}
           />
         </div>
 
@@ -258,7 +278,7 @@ function ToolEditor({
                   <Input
                     className="text-xs"
                     value={r.description}
-                    onChange={(e) => setRow(i, { description: e.target.value })}
+                    onChange={(e) => setRow(i, { description: e.target.value, descriptionDirty: true })}
                   />
                 </div>
                 <div className="grid gap-1">
@@ -312,7 +332,7 @@ function ToolGridCard({ tool, onClick }: { tool: Tool; onClick: () => void }) {
         )}
         {tool.deferred && (
           <Badge variant="outline" className="px-1.5 py-0 text-[10px]">
-            deferred
+            지연 실행
           </Badge>
         )}
         {!tool.enabled && (
@@ -328,7 +348,9 @@ function ToolGridCard({ tool, onClick }: { tool: Tool; onClick: () => void }) {
           {t("callsBadge", { count: tool.calls ?? 0 })}
         </Badge>
       </div>
-      <p className="text-muted-foreground line-clamp-1 h-4 text-xs">{tool.description || t("noDescription")}</p>
+      <p className="text-muted-foreground line-clamp-1 h-4 text-xs">
+        {visibleToolDescription(tool) || t("noDescription")}
+      </p>
       <div className="mt-auto flex flex-wrap gap-1 pt-1">
         {tool.agents.length === 0 && <span className="text-muted-foreground text-[10px]">{t("noBoundAgents")}</span>}
         {tool.agents.map((a) => (
@@ -744,7 +766,7 @@ function CustomToolDialog({
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4">
           <div className="grid gap-1.5">
-            <Label className="text-xs">Key</Label>
+            <Label className="text-xs">식별 키</Label>
             <Input
               className="font-mono"
               placeholder={t("keyPlaceholder")}
@@ -801,7 +823,7 @@ function CustomToolDialog({
             <div className="grid gap-2">
               <div className="flex gap-2">
                 <div className="grid gap-1.5">
-                  <Label className="text-xs">Method</Label>
+                  <Label className="text-xs">요청 방식</Label>
                   <Input
                     className="w-24"
                     value={ex.method}

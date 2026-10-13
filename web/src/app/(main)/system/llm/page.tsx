@@ -462,8 +462,8 @@ function ProfileSheet({
                 </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="anthropic">Anthropic</SelectItem>
-                  <SelectItem value="openai">OpenAI (Chat Completions)</SelectItem>
-                  <SelectItem value="openai-responses">OpenAI (Responses API)</SelectItem>
+                  <SelectItem value="openai">OpenAI (채팅 완성)</SelectItem>
+                  <SelectItem value="openai-responses">OpenAI (응답 API)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -554,7 +554,7 @@ function ProfileSheet({
           </div>
 
           <div className="grid gap-2">
-            <Label htmlFor="p-api-key">API Key</Label>
+            <Label htmlFor="p-api-key">API 키</Label>
             <Input
               id="p-api-key"
               type="password"
@@ -826,7 +826,7 @@ export default function LLMPage() {
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="font-semibold text-xl tracking-tight">LLM</h1>
+          <h1 className="font-semibold text-xl tracking-tight">언어 모델</h1>
           <p className="text-muted-foreground text-sm">{t("page.subtitle")}</p>
         </div>
         <div className="flex items-center gap-2">
@@ -897,7 +897,7 @@ export default function LLMPage() {
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-6 text-muted-foreground text-xs">
                       {p.api_key_hint && <span>{p.api_key_hint}</span>}
                       <span>
-                        {p.rate_per_second}/s · {p.rate_per_minute}/min
+                        초당 {p.rate_per_second}회 · 분당 {p.rate_per_minute}회
                       </span>
                       {p.proxy && <span className="truncate">{t("card.proxy", { proxy: p.proxy })}</span>}
                       {p.reasoning_effort && (

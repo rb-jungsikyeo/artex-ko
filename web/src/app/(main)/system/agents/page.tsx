@@ -79,8 +79,8 @@ function AgentGridCard({ agent, onOpen, onDeleted }: { agent: Agent; onOpen: () 
           {labels.description(agent) || t("noDescription")}
         </p>
         <div className="text-muted-foreground flex flex-wrap gap-1.5 text-[10px]">
-          <span className="rounded border px-1.5 py-0.5">MCP {agent.mcp_count ?? 0}</span>
-          <span className="rounded border px-1.5 py-0.5">Skill {agent.skill_count ?? 0}</span>
+          <span className="rounded border px-1.5 py-0.5">모델 연결 {agent.mcp_count ?? 0}</span>
+          <span className="rounded border px-1.5 py-0.5">스킬 {agent.skill_count ?? 0}</span>
           <span className="rounded border px-1.5 py-0.5">
             {t("toolLabel")} {agent.tool_count ?? 0}
           </span>
@@ -155,7 +155,7 @@ function CreateAgentDialog({ onCreated }: { onCreated: (key: string) => void }) 
         </DialogHeader>
         <div className="grid gap-4 py-2">
           <div className="grid gap-1.5">
-            <Label htmlFor="agent-key">Key</Label>
+            <Label htmlFor="agent-key">식별 키</Label>
             <Input
               id="agent-key"
               placeholder={t("keyPlaceholder")}

@@ -7,13 +7,13 @@ export type Locale = (typeof LOCALES)[number];
 // NEXT_PUBLIC_LOCALE 로 덮어쓸 수 있고, 실행 중에는 사용자가 설정 화면에서 고른 값(쿠키·localStorage)이 최종 결정권을 가진다.
 export const DEFAULT_LOCALE: Locale = "ko";
 
-// 언어 선택기에 보여 주는 각 locale 의 자국어 표기. 어떤 언어로 보고 있든 자기 언어
-// 이름은 그 언어로 읽혀야 하므로 번역 대상이 아니라 고정 표기로 둔다.
+// 한국어판의 언어 선택기에서도 모든 선택 항목을 한글로 표시한다. 실제 locale 값은
+// 그대로 유지하므로 다른 언어로 전환하는 기능에는 영향을 주지 않는다.
 export const LOCALE_LABELS: Record<Locale, string> = {
-  en: "English",
+  en: "영어",
   ko: "한국어",
-  zh: "中文",
-  es: "Español",
+  zh: "중국어",
+  es: "스페인어",
 };
 
 // 사용자가 고른 표시 언어를 저장하는 키. 화면은 localStorage 값을 읽는다. 쿠키에도 같은

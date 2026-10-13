@@ -306,7 +306,7 @@ export default function LLMRecordsPage() {
             className="h-8 pl-8"
           />
         </div>
-        <Input placeholder="Model" className="h-8 w-48" value={model} onChange={(e) => setModel(e.target.value)} />
+        <Input placeholder="모델명" className="h-8 w-48" value={model} onChange={(e) => setModel(e.target.value)} />
         <Select value={pickedTask} onValueChange={setPickedTask}>
           <SelectTrigger size="sm" className="w-56">
             <SelectValue placeholder={t("taskPlaceholder")} />
@@ -408,11 +408,11 @@ export default function LLMRecordsPage() {
                 <TableRow>
                   <TableHead className="w-[130px]">{t("colTime")}</TableHead>
                   <TableHead className="w-[60px]">{t("colTask")}</TableHead>
-                  <TableHead className="w-[90px]">Worker</TableHead>
-                  <TableHead className="w-[100px]">Profile</TableHead>
-                  <TableHead className="w-[140px]">Model</TableHead>
+                  <TableHead className="w-[90px]">작업 에이전트</TableHead>
+                  <TableHead className="w-[100px]">설정</TableHead>
+                  <TableHead className="w-[140px]">모델</TableHead>
                   <TableHead className="w-[70px]">{t("colLatency")}</TableHead>
-                  <TableHead className="w-[90px]">Tokens</TableHead>
+                  <TableHead className="w-[90px]">토큰</TableHead>
                   <TableHead className="w-[60px]">{t("colStatus")}</TableHead>
                 </TableRow>
               </TableHeader>
@@ -464,11 +464,11 @@ export default function LLMRecordsPage() {
                       <TableCell>
                         {rec.status === "ok" ? (
                           <Badge variant="secondary" className="text-xs text-emerald-600">
-                            OK
+                            정상
                           </Badge>
                         ) : (
                           <Badge variant="destructive" className="text-xs">
-                            Error
+                            오류
                           </Badge>
                         )}
                       </TableCell>
@@ -505,11 +505,11 @@ export default function LLMRecordsPage() {
               </span>
               {selected.status === "ok" ? (
                 <Badge variant="secondary" className="text-xs text-emerald-600">
-                  OK
+                  정상
                 </Badge>
               ) : (
                 <Badge variant="destructive" className="text-xs">
-                  Error
+                  오류
                 </Badge>
               )}
               {/* 원문 뷰 토글. 옛 기록은 원문이 없어 이때는 조용히 폴백하지 않고 비활성화해, 「원문과 파싱이 같다」처럼
@@ -532,7 +532,7 @@ export default function LLMRecordsPage() {
             <div className="grid min-h-0 flex-1 grid-cols-2 divide-x">
               <div className="flex min-h-0 min-w-0 flex-col">
                 <div className="flex items-center gap-2 border-b py-0.5 pr-1.5 pl-3 text-[11px] font-medium text-muted-foreground">
-                  <span>Request{showRaw && ` · ${t("raw")}`}</span>
+                  <span>요청{showRaw && ` · ${t("raw")}`}</span>
                   <CopyButton text={reqText || ""} />
                 </div>
                 <div className="min-h-0 flex-1 overflow-auto">
@@ -550,7 +550,7 @@ export default function LLMRecordsPage() {
               </div>
               <div className="flex min-h-0 min-w-0 flex-col">
                 <div className="flex items-center gap-2 border-b py-0.5 pr-1.5 pl-3 text-[11px] font-medium text-muted-foreground">
-                  <span>Response{showRaw && ` · ${t("raw")}(SSE)`}</span>
+                  <span>응답{showRaw && ` · ${t("raw")}(SSE)`}</span>
                   <CopyButton text={respText || ""} />
                 </div>
                 <div className="min-h-0 flex-1 overflow-auto">

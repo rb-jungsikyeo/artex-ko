@@ -105,7 +105,7 @@ export default function LoginPage() {
       <div className="flex w-full items-center justify-center bg-background p-8 lg:w-2/3">
         <div className="w-full max-w-md space-y-10 py-24 lg:py-32">
           <div className="space-y-4 text-center">
-            <h2 className="text-2xl font-medium tracking-tight">{t("login.title")}</h2>
+            <h2 className="font-medium text-2xl tracking-tight">{t("login.title")}</h2>
             <p className="mx-auto max-w-xl text-muted-foreground">{t("login.welcome")}</p>
           </div>
           <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -132,7 +132,7 @@ export default function LoginPage() {
                 onCheckedChange={(v) => setAgreed(v === true)}
                 className="mt-0.5"
               />
-              <Label htmlFor="agree-terms" className="text-sm font-normal leading-relaxed text-muted-foreground">
+              <Label htmlFor="agree-terms" className="font-normal text-muted-foreground text-sm leading-relaxed">
                 {t.rich("login.agree", {
                   terms: (chunks) => (
                     <button

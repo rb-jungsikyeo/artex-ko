@@ -211,7 +211,7 @@ export default function CommandsPage() {
                 <TableRow>
                   <TableHead className="w-[130px]">{t("colTime")}</TableHead>
                   <TableHead className="w-[60px]">{t("colTask")}</TableHead>
-                  <TableHead className="w-[90px]">Worker</TableHead>
+                  <TableHead className="w-[90px]">작업 에이전트</TableHead>
                   <TableHead className="w-[110px]">{t("colTool")}</TableHead>
                   <TableHead>{t("colInput")}</TableHead>
                   <TableHead className="w-[60px]">{t("colStatus")}</TableHead>

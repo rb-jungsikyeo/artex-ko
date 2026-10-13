@@ -357,7 +357,7 @@ export default function MCPPage() {
   return (
     <div className="flex flex-1 flex-col gap-4 md:gap-6">
       <div>
-        <h1 className="text-xl font-semibold tracking-tight">MCP</h1>
+        <h1 className="text-xl font-semibold tracking-tight">모델 연결</h1>
         <p className="text-muted-foreground text-sm">{t("subtitle")}</p>
       </div>
 

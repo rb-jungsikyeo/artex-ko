@@ -1020,7 +1020,7 @@ export default function SkillsPage() {
                 <div className="mt-2 flex flex-wrap gap-2">
                   {selectedSkill.license && (
                     <Badge variant="outline" className="text-xs font-normal">
-                      License: {selectedSkill.license}
+                      라이선스: {selectedSkill.license}
                     </Badge>
                   )}
                   {selectedSkill.compatibility && (
@@ -1265,15 +1265,15 @@ export default function SkillsPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="grid gap-1.5">
-                  <Label className="text-muted-foreground text-xs">license</Label>
+                  <Label className="text-muted-foreground text-xs">라이선스</Label>
                   <Input
-                    placeholder="MIT / Proprietary"
+                    placeholder="MIT / 독점 라이선스"
                     value={newLicense}
                     onChange={(e) => setNewLicense(e.target.value)}
                   />
                 </div>
                 <div className="grid gap-1.5">
-                  <Label className="text-muted-foreground text-xs">compatibility</Label>
+                  <Label className="text-muted-foreground text-xs">호환성</Label>
                   <Input
                     placeholder={t("compatPlaceholder")}
                     value={newCompat}

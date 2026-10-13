@@ -59,8 +59,7 @@ export function TodoPopover({
           title={disabled ? tr("none") : tr("view")}
           className="text-muted-foreground/70 hover:text-primary flex items-center gap-0.5 text-xs disabled:pointer-events-none disabled:opacity-40"
         >
-          <ListTodo className="size-3" />
-          Todo
+          <ListTodo className="size-3" />할 일
         </button>
       </PopoverTrigger>
       <PopoverContent align="end" className="max-h-80 w-80 overflow-auto p-2">

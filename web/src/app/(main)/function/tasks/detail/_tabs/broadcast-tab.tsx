@@ -238,12 +238,12 @@ function RelatedNodeCard({ node, assets }: { node: TaskNode; assets: FindingAsse
         <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">#{node.id}</code>
         <NodeStateBadge node={node} />
         {node.priority > 0 && (kind === "goal" || kind === "intent") && (
-          <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">P{node.priority}</span>
+          <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">우선 {node.priority}</span>
         )}
       </div>
       <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-muted-foreground">
         <span>{t("fieldType", { label: t(`kind.${kindKeyOf(kind)}`) })}</span>
-        <span>{t("fieldSource", { origin: node.origin || "system" })}</span>
+        <span>{t("fieldSource", { origin: node.origin || "시스템" })}</span>
         <span>{Number.isNaN(ts) ? node.ts : new Date(ts).toLocaleString("ko-KR")}</span>
       </div>
       <p className="line-clamp-4 text-xs break-words">{summary || t("noSummary")}</p>
@@ -378,14 +378,16 @@ function BroadcastRow({
               <code className="rounded bg-muted px-1.5 py-0.5 font-mono text-xs text-muted-foreground">#{node.id}</code>
               <NodeStateBadge node={node} />
               {node.priority > 0 && (kind === "goal" || kind === "intent") && (
-                <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">P{node.priority}</span>
+                <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                  우선 {node.priority}
+                </span>
               )}
               {fresh && (
                 <span className="rounded bg-primary px-1.5 py-0.5 text-[10px] font-semibold text-primary-foreground">
                   {t("fresh")}
                 </span>
               )}
-              <span className="ml-auto shrink-0 text-xs text-muted-foreground">{node.origin || "system"}</span>
+              <span className="ml-auto shrink-0 text-xs text-muted-foreground">{node.origin || "시스템"}</span>
             </div>
             <p className={cn("mt-1 text-sm", !open && "line-clamp-2")}>{summary || t("nodeRef", { id: node.id })}</p>
           </div>
@@ -398,7 +400,7 @@ function BroadcastRow({
                 {t("node")} <code className="font-mono">#{node.id}</code>
               </span>
               <span>{t("fieldType", { label: t(`kind.${kindKeyOf(kind)}`) })}</span>
-              <span>{t("fieldSource", { origin: node.origin || "system" })}</span>
+              <span>{t("fieldSource", { origin: node.origin || "시스템" })}</span>
               <span>{Number.isNaN(ts) ? node.ts : new Date(ts).toLocaleString("ko-KR")}</span>
             </div>
             {node.state === "deleted" && node.delete_reason && (
@@ -415,7 +417,7 @@ function BroadcastRow({
               </div>
             )}
             <div>
-              <div className="mb-1.5 text-xs font-medium text-muted-foreground">payload</div>
+              <div className="mb-1.5 text-xs font-medium text-muted-foreground">전달 내용</div>
               <pre className="max-h-64 overflow-auto rounded-md border bg-background p-3 font-mono text-xs whitespace-pre-wrap">
                 {prettyPayload(node.payload, t("noPayload"))}
               </pre>

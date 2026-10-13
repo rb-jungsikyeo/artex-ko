@@ -7,6 +7,7 @@ import { persistPreference } from "@/lib/preferences/preferences-storage";
 import { usePreferencesStore } from "@/stores/preferences/preferences-provider";
 
 const THEME_CYCLE = ["light", "dark", "system"] as const;
+const THEME_LABELS = { light: "밝게", dark: "어둡게", system: "시스템" } as const;
 
 export function ThemeSwitcher() {
   const themeMode = usePreferencesStore((s) => s.themeMode);
@@ -21,7 +22,11 @@ export function ThemeSwitcher() {
   };
 
   return (
-    <Button size="icon" onClick={cycleTheme} aria-label={`Current theme: ${themeMode}. Click to cycle themes`}>
+    <Button
+      size="icon"
+      onClick={cycleTheme}
+      aria-label={`현재 화면 모드: ${THEME_LABELS[themeMode]}. 누르면 다음 모드로 전환합니다`}
+    >
       {/* SYSTEM */}
       <Monitor className="hidden [html[data-theme-mode=system]_&]:block" />
 
