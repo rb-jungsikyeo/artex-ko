@@ -368,6 +368,20 @@ CREATE TABLE IF NOT EXISTS llm_profiles (
     model            TEXT NOT NULL,
     api_key          TEXT,
     api_key_hint     TEXT,
+    -- 인증 방식: 기존 공급자 API 키 또는 Sign in with ChatGPT OAuth.
+    auth_type        TEXT NOT NULL DEFAULT 'api_key' CHECK (auth_type IN ('api_key','chatgpt_oauth')),
+    -- OAuth 토큰은 애플리케이션 키로 암호화된 문자열만 저장한다. oauth_connected 는
+    -- 목록/가용성 판정용 비밀 없는 상태 플래그이며, 실제 요청 전에는 토큰 복호화와
+    -- 만료/갱신 검사를 다시 수행한다.
+    oauth_connected     BOOLEAN NOT NULL DEFAULT false,
+    oauth_email         TEXT NOT NULL DEFAULT '',
+    oauth_subject       TEXT NOT NULL DEFAULT '',
+    oauth_client_id     TEXT NOT NULL DEFAULT '',
+    oauth_access_token  TEXT NOT NULL DEFAULT '',
+    oauth_refresh_token TEXT NOT NULL DEFAULT '',
+    oauth_id_token      TEXT NOT NULL DEFAULT '',
+    oauth_scope         TEXT NOT NULL DEFAULT '',
+    oauth_expires_at    BIGINT NOT NULL DEFAULT 0,
     rate_per_second  DOUBLE PRECISION NOT NULL DEFAULT 0,
     rate_per_minute  DOUBLE PRECISION NOT NULL DEFAULT 0,
     context_window_k INTEGER NOT NULL DEFAULT 0,
@@ -434,6 +448,22 @@ ALTER TABLE llm_profiles ADD  CONSTRAINT llm_profiles_max_tokens_check
     CHECK (max_tokens >= 0);
 -- 自定义会话头名；补旧库。默认 '' = 不发送，旧配置行为不变。
 ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS session_header_key TEXT NOT NULL DEFAULT '';
+
+-- Sign in with ChatGPT OAuth 인증. 기존 프로필은 API 키 방식으로 유지된다. 토큰 열에는
+-- 평문이 아니라 서버의 jwt.key에서 파생한 AES-GCM 키로 암호화한 값만 저장한다.
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS auth_type            TEXT    NOT NULL DEFAULT 'api_key';
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS oauth_connected      BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS oauth_email          TEXT    NOT NULL DEFAULT '';
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS oauth_subject        TEXT    NOT NULL DEFAULT '';
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS oauth_client_id      TEXT    NOT NULL DEFAULT '';
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS oauth_access_token   TEXT    NOT NULL DEFAULT '';
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS oauth_refresh_token  TEXT    NOT NULL DEFAULT '';
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS oauth_id_token       TEXT    NOT NULL DEFAULT '';
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS oauth_scope          TEXT    NOT NULL DEFAULT '';
+ALTER TABLE llm_profiles ADD COLUMN IF NOT EXISTS oauth_expires_at     BIGINT  NOT NULL DEFAULT 0;
+ALTER TABLE llm_profiles DROP CONSTRAINT IF EXISTS llm_profiles_auth_type_check;
+ALTER TABLE llm_profiles ADD CONSTRAINT llm_profiles_auth_type_check
+    CHECK (auth_type IN ('api_key','chatgpt_oauth'));
 
 -- 单配置的重试覆盖（见 docs/LLM重试设计.md）。三组各自一对「次数 + 固定间隔」，
 -- 语义统一：次数 0=沿用全局默认、-1=关闭该层重试、>0=用该值；间隔 0=沿用该层的

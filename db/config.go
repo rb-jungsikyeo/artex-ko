@@ -11,17 +11,35 @@ import (
 
 // ---------- LLM profiles ----------
 
+const (
+	LLMAuthAPIKey       = "api_key"
+	LLMAuthChatGPTOAuth = "chatgpt_oauth"
+)
+
 type LLMProfile struct {
-	ID            int64   `json:"id"`
-	Name          string  `json:"name"`
-	Format        string  `json:"format"`
-	BaseURL       string  `json:"base_url,omitempty"`
-	Proxy         string  `json:"proxy,omitempty"` // LLM 出站代理(http/https/socks5);空=用环境变量
-	Model         string  `json:"model"`
-	APIKey        string  `json:"-"` // never serialized to UI
-	APIKeyHint    string  `json:"api_key_hint,omitempty"`
-	RatePerSecond float64 `json:"rate_per_second"`
-	RatePerMinute float64 `json:"rate_per_minute"`
+	ID         int64  `json:"id"`
+	Name       string `json:"name"`
+	Format     string `json:"format"`
+	BaseURL    string `json:"base_url,omitempty"`
+	Proxy      string `json:"proxy,omitempty"` // LLM 出站代理(http/https/socks5);空=用环境变量
+	Model      string `json:"model"`
+	APIKey     string `json:"-"` // never serialized to UI
+	APIKeyHint string `json:"api_key_hint,omitempty"`
+	// AuthType selects a conventional provider API key or Sign in with ChatGPT.
+	// OAuth token fields contain application-encrypted strings and are never
+	// serialized; OAuthConnected/Email/ExpiresAt are the safe UI-facing status.
+	AuthType          string  `json:"auth_type"`
+	OAuthConnected    bool    `json:"oauth_connected"`
+	OAuthEmail        string  `json:"oauth_email,omitempty"`
+	OAuthExpiresAt    int64   `json:"oauth_expires_at,omitempty"`
+	OAuthSubject      string  `json:"-"`
+	OAuthClientID     string  `json:"-"`
+	OAuthAccessToken  string  `json:"-"`
+	OAuthRefreshToken string  `json:"-"`
+	OAuthIDToken      string  `json:"-"`
+	OAuthScope        string  `json:"-"`
+	RatePerSecond     float64 `json:"rate_per_second"`
+	RatePerMinute     float64 `json:"rate_per_minute"`
 	// ContextWindowK is the model's context window in K tokens, used to size
 	// compaction thresholds. 0 = use a 200K default; capped at 1000 (1M).
 	ContextWindowK int `json:"context_window_k"`
@@ -80,13 +98,16 @@ type RetryOverride struct {
 // profileCols is the read column list (hint variant, no api key) shared by the
 // list query; profileColsKey is the same with api_key for the single-row loads.
 const profileRetryCols = `COALESCE(retry_connect_attempts,0),COALESCE(retry_connect_interval_ms,0),COALESCE(retry_empty_attempts,0),COALESCE(retry_empty_interval_ms,0),COALESCE(retry_stream_attempts,0),COALESCE(retry_stream_interval_ms,0)`
-const profileCols = `id,name,format,COALESCE(base_url,''),COALESCE(proxy,''),model,COALESCE(api_key_hint,''),rate_per_second,rate_per_minute,context_window_k,COALESCE(reasoning_effort,''),is_default,priority,pool_exclude,COALESCE(thinking_type,''),COALESCE(streaming,true),COALESCE(max_tokens,0),COALESCE(max_tokens_field,''),COALESCE(session_header_key,''),` + profileRetryCols
-const profileColsKey = `id,name,format,COALESCE(base_url,''),COALESCE(proxy,''),model,COALESCE(api_key,''),rate_per_second,rate_per_minute,context_window_k,COALESCE(reasoning_effort,''),is_default,priority,pool_exclude,COALESCE(thinking_type,''),COALESCE(streaming,true),COALESCE(max_tokens,0),COALESCE(max_tokens_field,''),COALESCE(session_header_key,''),` + profileRetryCols
+const profileOAuthCols = `COALESCE(auth_type,'api_key'),COALESCE(oauth_connected,false),COALESCE(oauth_email,''),COALESCE(oauth_subject,''),COALESCE(oauth_client_id,''),COALESCE(oauth_access_token,''),COALESCE(oauth_refresh_token,''),COALESCE(oauth_id_token,''),COALESCE(oauth_scope,''),COALESCE(oauth_expires_at,0),`
+const profileCols = `id,name,format,COALESCE(base_url,''),COALESCE(proxy,''),model,COALESCE(api_key_hint,''),` + profileOAuthCols + `rate_per_second,rate_per_minute,context_window_k,COALESCE(reasoning_effort,''),is_default,priority,pool_exclude,COALESCE(thinking_type,''),COALESCE(streaming,true),COALESCE(max_tokens,0),COALESCE(max_tokens_field,''),COALESCE(session_header_key,''),` + profileRetryCols
+const profileColsKey = `id,name,format,COALESCE(base_url,''),COALESCE(proxy,''),model,COALESCE(api_key,''),` + profileOAuthCols + `rate_per_second,rate_per_minute,context_window_k,COALESCE(reasoning_effort,''),is_default,priority,pool_exclude,COALESCE(thinking_type,''),COALESCE(streaming,true),COALESCE(max_tokens,0),COALESCE(max_tokens_field,''),COALESCE(session_header_key,''),` + profileRetryCols
 
 // scanProfile reads one row in the profileCols / profileColsKey column order. The
 // 7th column lands in APIKeyHint or APIKey depending on which list the caller used.
 func scanProfile(sc interface{ Scan(...any) error }, into *string, p *LLMProfile) error {
 	return sc.Scan(&p.ID, &p.Name, &p.Format, &p.BaseURL, &p.Proxy, &p.Model, into,
+		&p.AuthType, &p.OAuthConnected, &p.OAuthEmail, &p.OAuthSubject, &p.OAuthClientID,
+		&p.OAuthAccessToken, &p.OAuthRefreshToken, &p.OAuthIDToken, &p.OAuthScope, &p.OAuthExpiresAt,
 		&p.RatePerSecond, &p.RatePerMinute, &p.ContextWindowK, &p.ReasoningEffort, &p.IsDefault, &p.Priority, &p.PoolExclude, &p.ThinkingType, &p.Streaming,
 		&p.MaxTokens, &p.MaxTokensField, &p.SessionHeaderKey,
 		&p.Retry.Connect.Attempts, &p.Retry.Connect.IntervalMS,
@@ -139,7 +160,8 @@ func (d *DB) ProfileByID(id int64) (*LLMProfile, error) {
 // walk the slice front to back.
 func (d *DB) PoolProfiles() ([]*LLMProfile, error) {
 	rows, err := d.Query(`SELECT ` + profileColsKey + ` FROM llm_profiles
-WHERE COALESCE(api_key,'') <> '' AND (is_default OR NOT pool_exclude)
+WHERE ((auth_type='api_key' AND COALESCE(api_key,'') <> '') OR (auth_type='chatgpt_oauth' AND oauth_connected))
+  AND (is_default OR NOT pool_exclude)
 ORDER BY is_default DESC, priority DESC, id ASC`)
 	if err != nil {
 		return nil, err
@@ -163,24 +185,69 @@ func (d *DB) SaveProfile(p *LLMProfile) (int64, error) {
 		hint = "…" + p.APIKey[len(p.APIKey)-4:]
 	}
 	r := p.Retry.Clamped()
+	if p.AuthType != LLMAuthChatGPTOAuth {
+		p.AuthType = LLMAuthAPIKey
+	}
 	if p.ID == 0 {
 		var id int64
-		err := d.QueryRow(`INSERT INTO llm_profiles(name,format,base_url,proxy,model,api_key,api_key_hint,rate_per_second,rate_per_minute,context_window_k,reasoning_effort,priority,pool_exclude,thinking_type,streaming,max_tokens,max_tokens_field,session_header_key,retry_connect_attempts,retry_connect_interval_ms,retry_empty_attempts,retry_empty_interval_ms,retry_stream_attempts,retry_stream_interval_ms)
-VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),$5,NULLIF($6,''),NULLIF($7,''),$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24) RETURNING id`,
-			p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.APIKey, hint, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
+		err := d.QueryRow(`INSERT INTO llm_profiles(name,format,base_url,proxy,model,api_key,api_key_hint,auth_type,rate_per_second,rate_per_minute,context_window_k,reasoning_effort,priority,pool_exclude,thinking_type,streaming,max_tokens,max_tokens_field,session_header_key,retry_connect_attempts,retry_connect_interval_ms,retry_empty_attempts,retry_empty_interval_ms,retry_stream_attempts,retry_stream_interval_ms)
+VALUES ($1,$2,NULLIF($3,''),NULLIF($4,''),$5,NULLIF($6,''),NULLIF($7,''),$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25) RETURNING id`,
+			p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.APIKey, hint, p.AuthType, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
 			r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS).Scan(&id)
 		return id, err
 	}
 	if p.APIKey == "" {
-		_, err := d.Exec(`UPDATE llm_profiles SET name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,rate_per_second=$6,rate_per_minute=$7,context_window_k=$8,reasoning_effort=$9,priority=$10,pool_exclude=$11,thinking_type=$12,streaming=$13,max_tokens=$14,max_tokens_field=$15,session_header_key=$16,retry_connect_attempts=$17,retry_connect_interval_ms=$18,retry_empty_attempts=$19,retry_empty_interval_ms=$20,retry_stream_attempts=$21,retry_stream_interval_ms=$22 WHERE id=$23`,
-			p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
+		_, err := d.Exec(`UPDATE llm_profiles SET name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,auth_type=$6,rate_per_second=$7,rate_per_minute=$8,context_window_k=$9,reasoning_effort=$10,priority=$11,pool_exclude=$12,thinking_type=$13,streaming=$14,max_tokens=$15,max_tokens_field=$16,session_header_key=$17,retry_connect_attempts=$18,retry_connect_interval_ms=$19,retry_empty_attempts=$20,retry_empty_interval_ms=$21,retry_stream_attempts=$22,retry_stream_interval_ms=$23 WHERE id=$24`,
+			p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.AuthType, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
 			r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.ID)
 		return p.ID, err
 	}
-	_, err := d.Exec(`UPDATE llm_profiles SET name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,api_key=$6,api_key_hint=$7,rate_per_second=$8,rate_per_minute=$9,context_window_k=$10,reasoning_effort=$11,priority=$12,pool_exclude=$13,thinking_type=$14,streaming=$15,max_tokens=$16,max_tokens_field=$17,session_header_key=$18,retry_connect_attempts=$19,retry_connect_interval_ms=$20,retry_empty_attempts=$21,retry_empty_interval_ms=$22,retry_stream_attempts=$23,retry_stream_interval_ms=$24 WHERE id=$25`,
-		p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.APIKey, hint, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
+	_, err := d.Exec(`UPDATE llm_profiles SET name=$1,format=$2,base_url=NULLIF($3,''),proxy=NULLIF($4,''),model=$5,api_key=$6,api_key_hint=$7,auth_type=$8,rate_per_second=$9,rate_per_minute=$10,context_window_k=$11,reasoning_effort=$12,priority=$13,pool_exclude=$14,thinking_type=$15,streaming=$16,max_tokens=$17,max_tokens_field=$18,session_header_key=$19,retry_connect_attempts=$20,retry_connect_interval_ms=$21,retry_empty_attempts=$22,retry_empty_interval_ms=$23,retry_stream_attempts=$24,retry_stream_interval_ms=$25 WHERE id=$26`,
+		p.Name, p.Format, p.BaseURL, p.Proxy, p.Model, p.APIKey, hint, p.AuthType, p.RatePerSecond, p.RatePerMinute, p.ContextWindowK, p.ReasoningEffort, p.Priority, p.PoolExclude, p.ThinkingType, p.Streaming, p.MaxTokens, p.MaxTokensField, p.SessionHeaderKey,
 		r.Connect.Attempts, r.Connect.IntervalMS, r.Empty.Attempts, r.Empty.IntervalMS, r.Stream.Attempts, r.Stream.IntervalMS, p.ID)
 	return p.ID, err
+}
+
+// ClearProfileAPIKey removes an obsolete provider key when a profile switches
+// to ChatGPT OAuth, preventing the hidden old credential from affecting health
+// checks or failover admission.
+func (d *DB) ClearProfileAPIKey(id int64) error {
+	_, err := d.Exec(`UPDATE llm_profiles SET api_key=NULL, api_key_hint=NULL WHERE id=$1`, id)
+	return err
+}
+
+// SaveProfileOAuth atomically replaces a profile's complete rotating OAuth token
+// set. Callers pass only application-encrypted token strings; plaintext tokens
+// never cross the database package boundary.
+func (d *DB) SaveProfileOAuth(id int64, email, subject, clientID, accessToken, refreshToken, idToken, scope string, expiresAt int64) error {
+	res, err := d.Exec(`UPDATE llm_profiles SET
+  auth_type='chatgpt_oauth', oauth_connected=true, oauth_email=$1,
+  oauth_subject=$2, oauth_client_id=$3, oauth_access_token=$4,
+  oauth_refresh_token=$5, oauth_id_token=$6, oauth_scope=$7,
+  oauth_expires_at=$8
+WHERE id=$9`, email, subject, clientID, accessToken, refreshToken, idToken, scope, expiresAt, id)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrLLMProfileNotFound
+	}
+	return nil
+}
+
+// ClearProfileOAuth removes the renewable session from local storage. Remote
+// revocation is attempted by the server before this method is called.
+func (d *DB) ClearProfileOAuth(id int64) error {
+	_, err := d.Exec(`UPDATE llm_profiles SET
+  oauth_connected=false, oauth_email='', oauth_subject='', oauth_client_id='',
+  oauth_access_token='', oauth_refresh_token='', oauth_id_token='', oauth_scope='',
+  oauth_expires_at=0
+WHERE id=$1`, id)
+	return err
 }
 
 var (
@@ -815,7 +882,7 @@ type MCPServer struct {
 	Env       json.RawMessage `json:"env"`
 	URL       string          `json:"url,omitempty"`
 	Enabled   bool            `json:"enabled"`
-	Insecure  bool            `json:"insecure"` // http: skip TLS cert verification (self-signed servers, issue #108)
+	Insecure  bool            `json:"insecure"`        // http: skip TLS cert verification (self-signed servers, issue #108)
 	Tools     []string        `json:"tools,omitempty"` // cached tool names (mcp_tools_cache)
 }
 

@@ -1034,6 +1034,10 @@ export interface LLMProfile {
   proxy?: string;
   model: string;
   api_key_hint?: string;
+  auth_type?: "api_key" | "chatgpt_oauth";
+  oauth_connected?: boolean;
+  oauth_email?: string;
+  oauth_expires_at?: number;
   rate_per_second: number;
   rate_per_minute: number;
   context_window_k?: number;

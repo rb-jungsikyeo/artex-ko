@@ -10,8 +10,10 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
+	"iter"
 	"log"
 	"net/http"
 	"net/url"
@@ -34,6 +36,10 @@ type Config struct {
 	BaseURL string
 	APIKey  string
 	Model   string
+	// AuthType is "api_key" (default) or "chatgpt_oauth". ProfileID identifies
+	// the persisted OAuth token set; token material itself never lives in Config.
+	AuthType  string
+	ProfileID int64
 	// Proxy routes all LLM requests through the given proxy URL (http/https/socks5,
 	// optionally with user:pass@ credentials). Empty means direct — it does NOT
 	// fall back to the standard *_PROXY environment variables.
@@ -254,7 +260,30 @@ func (c Config) Provider() string {
 // limiter lives on the single provider instance — so planner + all workers +
 // main agent (which share this provider) are bounded by one shared rate limit.
 func (c Config) NewProvider() (llm.Provider, error) {
-	client, err := quotaAwareHTTPClient(c.Proxy, c.SessionHeaderKey)
+	return c.newProvider(nil, false)
+}
+
+// BearerTokenSource returns a current OAuth access token. Implementations may
+// refresh a rotating token set before returning; the transport invokes it for
+// every request so long-lived cached providers never retain an expired token.
+type BearerTokenSource func(context.Context) (string, error)
+
+// NewChatGPTOAuthProvider builds the Responses provider used by Sign in with
+// ChatGPT profiles. The wire adapter enforces the preview contract (streaming,
+// store=false, unsupported fields omitted) while preserving ARTEX's existing
+// stateless history and function-tool protocol.
+func (c Config) NewChatGPTOAuthProvider(source BearerTokenSource) (llm.Provider, error) {
+	if c.Format != llm.FormatOpenAIResponses {
+		return nil, fmt.Errorf("llm: ChatGPT OAuth requires openai-responses format")
+	}
+	if source == nil {
+		return nil, fmt.Errorf("llm: ChatGPT OAuth token source required")
+	}
+	return c.newProvider(source, true)
+}
+
+func (c Config) newProvider(tokenSource BearerTokenSource, chatGPTOAuth bool) (llm.Provider, error) {
+	client, err := quotaAwareHTTPClientWithAuth(c.Proxy, c.SessionHeaderKey, tokenSource, chatGPTOAuth)
 	if err != nil {
 		return nil, err
 	}
@@ -280,7 +309,33 @@ func (c Config) NewProvider() (llm.Provider, error) {
 	if c.RatePerSecond > 0 || c.RatePerMinute > 0 {
 		lc.RateLimit = &llm.RateLimit{PerSecond: c.RatePerSecond, PerMinute: c.RatePerMinute}
 	}
-	return llm.NewProvider(lc)
+	p, err := llm.NewProvider(lc)
+	if err != nil {
+		return nil, err
+	}
+	if chatGPTOAuth {
+		return &streamingOnlyProvider{inner: p}, nil
+	}
+	return p, nil
+}
+
+// streamingOnlyProvider adapts Complete callers (graph compression, summaries,
+// etc.) onto the OAuth route's mandatory SSE transport.
+type streamingOnlyProvider struct{ inner llm.Provider }
+
+func (p *streamingOnlyProvider) Stream(ctx context.Context, req llm.CompletionRequest) iter.Seq2[llm.StreamEvent, error] {
+	return p.inner.Stream(ctx, req)
+}
+
+func (p *streamingOnlyProvider) Complete(ctx context.Context, req llm.CompletionRequest) (llm.Message, string, llm.Usage, error) {
+	acc := llm.NewAccumulator()
+	for ev, err := range p.inner.Stream(ctx, req) {
+		if err != nil {
+			return llm.Message{}, "", llm.Usage{}, err
+		}
+		acc.Add(ev)
+	}
+	return acc.Message(), acc.StopReason, acc.Usage, nil
 }
 
 // IsQuotaExhaustedMessage deliberately recognizes only explicit balance,
@@ -333,9 +388,31 @@ type quotaAwareTransport struct {
 	// carries; its value is the session id read from the request context. Empty
 	// disables it. See Config.SessionHeaderKey.
 	sessionHeaderKey string
+	bearerToken      BearerTokenSource
+	chatGPTOAuth     bool
 }
 
 func (t quotaAwareTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	// Each request is private to one round trip, but clone it before replacing the
+	// body/Authorization so retries and recorders never observe partially-mutated
+	// state from another layer.
+	req = req.Clone(req.Context())
+	req.Header = req.Header.Clone()
+	if t.bearerToken != nil {
+		token, err := t.bearerToken(req.Context())
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(token) == "" {
+			return nil, fmt.Errorf("llm: empty ChatGPT OAuth access token")
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	if t.chatGPTOAuth && strings.HasSuffix(req.URL.Path, "/responses") {
+		if err := sanitizeChatGPTOAuthRequest(req); err != nil {
+			return nil, err
+		}
+	}
 	// Custom session-id header: name is user-configured, value is THIS run's
 	// session id (norma stashes it on the context via transcript.WithSessionID).
 	// Stable across a session's turns and distinct across sessions — exactly what
@@ -397,7 +474,67 @@ func requestBodySnapshot(req *http.Request) string {
 	return string(b)
 }
 
+func sanitizeChatGPTOAuthRequest(req *http.Request) error {
+	if req.GetBody == nil {
+		return fmt.Errorf("llm: ChatGPT OAuth request body is not replayable")
+	}
+	rc, err := req.GetBody()
+	if err != nil {
+		return fmt.Errorf("llm: read ChatGPT OAuth request: %w", err)
+	}
+	raw, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		return fmt.Errorf("llm: read ChatGPT OAuth request: %w", err)
+	}
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil {
+		return fmt.Errorf("llm: decode ChatGPT OAuth request: %w", err)
+	}
+	// The ChatGPT-plan inference contract accepts a deliberately small body
+	// surface. Norma normally sends the system prompt through `instructions`,
+	// which is not on that allowlist, so preserve it as the first developer
+	// message inside the allowed `input` field before dropping unknown keys.
+	if instructions, ok := body["instructions"].(string); ok && strings.TrimSpace(instructions) != "" {
+		developer := map[string]any{"role": "developer", "content": instructions}
+		switch input := body["input"].(type) {
+		case []any:
+			body["input"] = append([]any{developer}, input...)
+		case string:
+			body["input"] = []any{developer, map[string]any{"role": "user", "content": input}}
+		case nil:
+			body["input"] = []any{developer}
+		default:
+			return fmt.Errorf("llm: unsupported ChatGPT OAuth input type %T", input)
+		}
+	}
+	allowed := map[string]bool{
+		"model": true, "input": true, "stream": true, "store": true,
+		"tools": true, "tool_choice": true, "parallel_tool_calls": true,
+		"reasoning": true, "text": true, "include": true,
+	}
+	for key := range body {
+		if !allowed[key] {
+			delete(body, key)
+		}
+	}
+	body["store"] = false
+	body["stream"] = true
+	clean, err := json.Marshal(body)
+	if err != nil {
+		return fmt.Errorf("llm: encode ChatGPT OAuth request: %w", err)
+	}
+	req.Body = io.NopCloser(bytes.NewReader(clean))
+	req.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(bytes.NewReader(clean)), nil }
+	req.ContentLength = int64(len(clean))
+	return nil
+}
+
 func quotaAwareHTTPClient(proxy, sessionHeaderKey string) (*http.Client, error) {
+	return quotaAwareHTTPClientWithAuth(proxy, sessionHeaderKey, nil, false)
+}
+
+func quotaAwareHTTPClientWithAuth(proxy, sessionHeaderKey string, bearerToken BearerTokenSource, chatGPTOAuth bool) (*http.Client, error) {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	proxy = strings.TrimSpace(proxy)
 	if proxy == "" {
@@ -416,7 +553,10 @@ func quotaAwareHTTPClient(proxy, sessionHeaderKey string) (*http.Client, error) 
 		}
 		transport.Proxy = http.ProxyURL(proxyURL)
 	}
-	return &http.Client{Transport: quotaAwareTransport{base: transport, sessionHeaderKey: strings.TrimSpace(sessionHeaderKey)}}, nil
+	return &http.Client{Transport: quotaAwareTransport{
+		base: transport, sessionHeaderKey: strings.TrimSpace(sessionHeaderKey),
+		bearerToken: bearerToken, chatGPTOAuth: chatGPTOAuth,
+	}}, nil
 }
 
 // logTestConnection prints the raw HTTP status code(s) and response body of a
@@ -459,6 +599,12 @@ func TestConnection(ctx context.Context, c Config) (time.Duration, string, error
 	if err != nil {
 		return 0, "", err
 	}
+	return TestProviderConnection(ctx, c, prov)
+}
+
+// TestProviderConnection runs the same real model check against a provider that
+// was built externally, such as a refreshing ChatGPT OAuth profile.
+func TestProviderConnection(ctx context.Context, c Config, prov llm.Provider) (time.Duration, string, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	// 抓取原始 wire 报文:连接测试最需要看到的就是网关到底回了什么(状态码+响应体),

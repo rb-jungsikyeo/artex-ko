@@ -22,7 +22,7 @@ type taskLLMResolution struct {
 // 할당량·설정 체인)에 맞춘다. Source enum 값과 영어 오류 문구는 번역 대상이 아니다.
 const (
 	reasonLLMProfileMissing     = "LLM 설정을 찾을 수 없습니다"
-	reasonLLMProfileNoAPIKey    = "LLM 설정에 API Key 가 지정되지 않았습니다"
+	reasonLLMProfileNoAPIKey    = "LLM 설정에 사용할 인증 정보가 없습니다"
 	reasonLLMProfileInvalid     = "LLM 설정 형식 또는 매개변수가 올바르지 않습니다"
 	reasonTaskLLMChainExhausted = "작업 LLM 설정 체인의 할당량을 모두 소진했습니다"
 	reasonNoLLMAvailable        = "사용 가능한 LLM 설정이 없습니다"
@@ -41,7 +41,9 @@ func (s *Server) resolutionFromProfile(p *db.LLMProfile, source string) taskLLMR
 		Model:     p.Model,
 		Source:    source,
 	}
-	if p.APIKey == "" {
+	credentialReady := (p.AuthType == db.LLMAuthAPIKey && p.APIKey != "") ||
+		(p.AuthType == db.LLMAuthChatGPTOAuth && p.OAuthConnected)
+	if !credentialReady {
 		result.Reason = reasonLLMProfileNoAPIKey
 		return result
 	}

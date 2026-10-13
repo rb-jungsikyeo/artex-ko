@@ -1875,6 +1875,19 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	p := body.LLMProfile
 	p.APIKey = body.APIKey
 	p.Streaming = body.Streaming == nil || *body.Streaming
+	if p.AuthType == db.LLMAuthChatGPTOAuth {
+		// ChatGPT 플랜 사용 경로는 공개 Responses API의 강제 스트리밍 계약만
+		// 지원한다. 전송 계층도 이를 재검증하지만 저장 단계에서 UI 상태부터 정규화한다.
+		p.Format = "openai-responses"
+		p.BaseURL = "https://api.openai.com/v1"
+		p.APIKey = ""
+		p.Streaming = true
+		p.MaxTokens = 0
+		p.MaxTokensField = ""
+		p.ThinkingType = ""
+	} else {
+		p.AuthType = db.LLMAuthAPIKey
+	}
 	// 输出上限:负数无意义,归零(= 不发送该字段)。字段名开关只有 Chat Completions
 	// 用得上——anthropic 与 openai-responses 各自定死了字段名,存下来只会误导后续读者,
 	// 故非 openai 格式一律清空。未知取值同样清空,避免把 DB CHECK 的报错甩给用户。
@@ -1888,6 +1901,12 @@ func (s *Server) pgSaveProfile(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, 500, err.Error())
 		return
+	}
+	if p.AuthType == db.LLMAuthChatGPTOAuth {
+		_ = pg.ClearProfileAPIKey(id)
+	} else {
+		// Switching back to an API key also removes any retained renewable session.
+		_ = pg.ClearProfileOAuth(id)
 	}
 	// Editing a profile rebuilds any task pinned to it on its next round. Reapply
 	// the active profile too: the global fallback and explicit task chains must
@@ -1995,6 +2014,17 @@ func (s *Server) pgActivateProfile(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
+	p, err := pg.ProfileByID(body.ID)
+	if err != nil || p == nil {
+		writeErr(w, 404, "모델 설정을 찾을 수 없습니다")
+		return
+	}
+	credentialReady := (p.AuthType == db.LLMAuthAPIKey && p.APIKey != "") ||
+		(p.AuthType == db.LLMAuthChatGPTOAuth && p.OAuthConnected)
+	if !credentialReady {
+		writeErr(w, 400, "활성화하기 전에 API 키를 입력하거나 ChatGPT 계정을 연결해 주세요")
+		return
+	}
 	if err := pg.SetActiveProfile(body.ID); err != nil {
 		writeErr(w, 500, err.Error())
 		return
@@ -2054,11 +2084,23 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 400, err.Error())
 		return
 	}
-	// Resolve API key: form input > profile stored key.
+	// Resolve credentials: form API key > persisted API key. ChatGPT OAuth uses
+	// the same bearer header, but the server refreshes and decrypts it just in time.
 	apiKey := strings.TrimSpace(req.APIKey)
-	if apiKey == "" && req.ProfileID != nil {
+	if req.ProfileID != nil {
 		if p, err := s.m.pg.ProfileByID(*req.ProfileID); err == nil && p != nil {
-			apiKey = p.APIKey
+			if p.AuthType == db.LLMAuthChatGPTOAuth {
+				if token, tokenErr := s.chatGPTOAuthToken(r.Context(), p.ID); tokenErr == nil {
+					apiKey = token
+					req.Provider = "openai-responses"
+					req.BaseURL = "https://api.openai.com/v1"
+				} else {
+					writeJSON(w, 200, map[string]any{"ok": false, "error": tokenErr.Error()})
+					return
+				}
+			} else if apiKey == "" {
+				apiKey = p.APIKey
+			}
 		}
 	}
 	if apiKey == "" {
@@ -2145,17 +2187,28 @@ func (s *Server) pgListModels(w http.ResponseWriter, r *http.Request) {
 			lastErr = fmt.Sprintf(errMgmtAPIReturned, resp.StatusCode, string(body[:min(len(body), 512)]))
 			continue
 		}
-		// Both OpenAI and Anthropic return {"data": [{"id": "..."},...]}.
+		// API-key providers generally return {data:[{id}]}; ChatGPT plan OAuth
+		// returns {models:[{slug,display_name,visibility}]}. Keep the server order
+		// and expose slugs intended for the account's picker.
 		var parsed struct {
 			Data []struct {
 				ID string `json:"id"`
 			} `json:"data"`
+			Models []struct {
+				Slug       string `json:"slug"`
+				Visibility string `json:"visibility"`
+			} `json:"models"`
 		}
 		if err := json.Unmarshal(body, &parsed); err != nil {
 			lastErr = errMgmtParseRespFail + err.Error()
 			continue
 		}
-		models := make([]string, 0, len(parsed.Data))
+		models := make([]string, 0, len(parsed.Data)+len(parsed.Models))
+		for _, m := range parsed.Models {
+			if m.Slug != "" && (m.Visibility == "" || m.Visibility == "list") {
+				models = append(models, m.Slug)
+			}
+		}
 		for _, m := range parsed.Data {
 			if m.ID != "" {
 				models = append(models, m.ID)

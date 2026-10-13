@@ -980,6 +980,7 @@ export const api = {
     base_url?: string;
     proxy?: string;
     api_key?: string; // blank on update keeps the existing key
+    auth_type?: "api_key" | "chatgpt_oauth";
     rate_per_second?: number;
     rate_per_minute?: number;
     context_window_k?: number;
@@ -1010,6 +1011,11 @@ export const api = {
       proxy,
       profile_id,
     }),
+  startLLMOAuth: (profile_id: number) =>
+    post<{ state: string; authorization_url: string }>("/llm/oauth/start", { profile_id }),
+  llmOAuthStatus: (state: string) =>
+    get<{ done: boolean; error?: string; profile_id: number }>(`/llm/oauth/status?state=${encodeURIComponent(state)}`),
+  disconnectLLMOAuth: (profile_id: number) => post<{ ok: boolean }>("/llm/oauth/disconnect", { profile_id }),
 
   // ---- agents ----
   agents: () => get<{ agents: Agent[] }>("/agents").then((r) => arr(r.agents)),

@@ -89,7 +89,7 @@ The original (Chinese UI) screens are available in [`README.zh.md`](README.zh.md
 
 ## Quick start (Docker Compose)
 
-> **Prerequisites:** Docker and Docker Compose. The database is **PostgreSQL**, brought up by compose. Exploration requires an **LLM** (`ANTHROPIC_API_KEY` or `OPENAI_API_KEY`; can also be set in the UI).
+> **Prerequisites:** Docker and Docker Compose. The database is **PostgreSQL**, brought up by compose. Exploration requires an **LLM** (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or a ChatGPT account connected in the UI).
 
 > **Image:** the `artex` service in `docker-compose.yml` pulls `ghcr.io/jiwoochris/artex-ko`, the Korean-edition image this repository publishes to GitHub Container Registry on every release tag (`v*`). The default tag is `latest` (the most recent release); set `ARTEX_TAG` in `.env` to pin a specific release. Upstream's original image `autumn27/artex` has been taken down from Docker Hub and is no longer used.
 
@@ -139,6 +139,8 @@ Upstream provides several methods: an install script (`./install.sh`), precompil
 ```
 
 **LLM:** `export ANTHROPIC_API_KEY=sk-...` (or `OPENAI_API_KEY`), or enter it on the UI's "LLM settings" page. Optional environment variables: `ARTEX_LLM_PROVIDER` / `ARTEX_LLM_MODEL` / `ARTEX_LLM_BASE_URL` / `ARTEX_LLM_PROXY`. To use a domestic or open model, point `ARTEX_LLM_BASE_URL` at an OpenAI-compatible endpoint.
+
+**Connect a ChatGPT account:** On "Model connections," choose "Connect a ChatGPT account" to call the OpenAI Responses API with ChatGPT plan authorization instead of an API key. After authorization, load the models available to the account, select one, test it, and activate the profile. Access and refresh tokens are encrypted with a key derived from the server JWT signing key before they are stored in PostgreSQL, and they are never returned by the management API. The sign-in callback is loopback-only. For a non-default port, set `ARTEX_SIWC_REDIRECT_URI=http://127.0.0.1:<port>/api/llm/oauth/callback`.
 
 **Output language:** this edition forces user-facing output into Korean via a small, code-fixed directive appended to each role's system prompt (it does not translate the reasoning body). If you need a different output language, adapt that directive in `agent/prompt.go` (`langDirective`).
 

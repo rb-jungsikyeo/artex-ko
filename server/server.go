@@ -59,7 +59,7 @@ const (
 
 	// LLM 설정 검증 (validateTaskProfileIDs → createTask/updateTaskLLMProfiles writeErr)
 	errLLMProfileInvalid  = "LLM 설정 id가 올바르지 않거나 중복되었습니다"
-	errLLMProfileNotFound = "LLM 설정 #%d를 찾을 수 없거나 API Key가 설정되어 있지 않습니다"
+	errLLMProfileNotFound = "LLM 설정 #%d를 찾을 수 없거나 사용할 인증 정보가 없습니다"
 
 	// 자산 저장소·커버리지 (taskCoverage / taskCoverageGraph / taskAssetRefs …)
 	errAssetStoreDisabled = "자산 저장소가 활성화되어 있지 않습니다"
@@ -126,6 +126,12 @@ type Server struct {
 	passHashLoaded bool
 	passHashAt     time.Time
 	loginLimiter   *authLimiter
+
+	// Sign in with ChatGPT OAuth state. Pending PKCE attempts are short-lived and
+	// memory-only; persisted rotating credentials are encrypted in PostgreSQL.
+	oauthStateMu   sync.Mutex
+	oauthPending   map[string]*siwcPending
+	oauthRefreshMu sync.Mutex
 
 	// concMu serializes concurrency-cap decisions (admission + reconcile) so a
 	// scheduler tick and an HTTP settings change / task creation can't both count
@@ -233,8 +239,8 @@ func New(ctx context.Context, m *Manager, skillDir string, dataDir string, keyDi
 	s := &Server{m: m, engine: NewEngine(m), ctx: ctx, skillDir: skillDir, jwtKey: key, chatBusy: map[string]bool{},
 		chatCancel: map[string]context.CancelCauseFunc{}, triggerQ: map[string][]triggeredRun{},
 		triggerActive: map[string]int{}, triggerCfg: map[string]triggerBehavior{},
-		profChatAgents: map[int64]*agent.ChatAgent{},
-		provByProfile:  map[int64]*provEntry{}, llmHealth: newLLMHealthRegistry(m.pg),
+		profChatAgents: map[int64]*agent.ChatAgent{}, oauthPending: map[string]*siwcPending{},
+		provByProfile: map[int64]*provEntry{}, llmHealth: newLLMHealthRegistry(m.pg),
 		taskAgents: map[string]*taskAgentBundle{}, archiveWake: make(chan struct{}, 1)}
 	// First-run protection: cache the password hash and, while none is set, issue
 	// the console setup token (or apply ARTEX_ADMIN_PASSWORD) before any request.
@@ -436,6 +442,14 @@ func (s *Server) loadLLMConfig() (agent.Config, bool) {
 		return agent.Config{}, false
 	}
 	cfg := agent.ConfigFrom(p.Format, p.Model, p.BaseURL, p.APIKey, p.Proxy)
+	cfg.AuthType, cfg.ProfileID = p.AuthType, p.ID
+	if p.AuthType == db.LLMAuthChatGPTOAuth {
+		if !p.OAuthConnected {
+			return agent.Config{}, false
+		}
+		cfg.APIKey = "chatgpt-oauth" // readiness sentinel; per-request source supplies the real token
+		cfg.Stream, cfg.MaxTokens = true, 0
+	}
 	cfg.RatePerSecond, cfg.RatePerMinute = p.RatePerSecond, p.RatePerMinute
 	cfg.ContextWindowK = p.ContextWindowK
 	cfg.ThinkingType = p.ThinkingType
@@ -482,7 +496,7 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 	}
 	newID, err := s.m.pg.SaveProfile(&db.LLMProfile{
 		ID: id, Name: "default", Format: format, Model: cfg.Model, BaseURL: cfg.BaseURL, Proxy: cfg.Proxy,
-		APIKey: cfg.APIKey, RatePerSecond: cfg.RatePerSecond, RatePerMinute: cfg.RatePerMinute,
+		APIKey: cfg.APIKey, AuthType: db.LLMAuthAPIKey, RatePerSecond: cfg.RatePerSecond, RatePerMinute: cfg.RatePerMinute,
 		ContextWindowK: cfg.ContextWindowK, ThinkingType: cfg.ThinkingType, ReasoningEffort: cfg.ReasoningEffort, IsDefault: true,
 		Priority: priority, PoolExclude: poolExclude, Streaming: streaming,
 		MaxTokens: maxTokens, MaxTokensField: maxTokensField, SessionHeaderKey: sessionHeaderKey,
@@ -500,6 +514,11 @@ func (s *Server) saveLLMConfig(cfg agent.Config) error {
 func (s *Server) reapplyActiveProfile() {
 	cfg, ok := s.loadLLMConfig()
 	if !ok {
+		s.cfgMu.Lock()
+		s.chatAgent, s.llmProv, s.llmDirect = nil, nil, nil
+		s.llmCfg, s.llmOn, s.llmProf = agent.Config{}, false, ""
+		s.cfgMu.Unlock()
+		s.invalidateTaskAgents()
 		return
 	}
 	if err := s.applyLLM(cfg); err != nil {
@@ -607,6 +626,14 @@ func (s *Server) loadProfileConfig(id int64) (agent.Config, bool) {
 		return agent.Config{}, false
 	}
 	cfg := agent.ConfigFrom(p.Format, p.Model, p.BaseURL, p.APIKey, p.Proxy)
+	cfg.AuthType, cfg.ProfileID = p.AuthType, p.ID
+	if p.AuthType == db.LLMAuthChatGPTOAuth {
+		if !p.OAuthConnected {
+			return agent.Config{}, false
+		}
+		cfg.APIKey = "chatgpt-oauth"
+		cfg.Stream, cfg.MaxTokens = true, 0
+	}
 	cfg.RatePerSecond, cfg.RatePerMinute = p.RatePerSecond, p.RatePerMinute
 	cfg.ContextWindowK = p.ContextWindowK
 	cfg.ThinkingType = p.ThinkingType
@@ -681,7 +708,15 @@ func (s *Server) providerForProfile(id int64) (llm.Provider, agent.Config, bool)
 	if !ok {
 		return nil, agent.Config{}, false
 	}
-	prov, err := cfg.NewProvider()
+	var prov llm.Provider
+	var err error
+	if cfg.AuthType == db.LLMAuthChatGPTOAuth {
+		prov, err = cfg.NewChatGPTOAuthProvider(func(ctx context.Context) (string, error) {
+			return s.chatGPTOAuthToken(ctx, id)
+		})
+	} else {
+		prov, err = cfg.NewProvider()
+	}
 	if err != nil {
 		log.Printf("[engine] build provider for LLM profile %d failed: %v", id, err)
 		return nil, agent.Config{}, false
@@ -847,6 +882,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/llm", s.getLLM)
 	mux.HandleFunc("POST /api/llm", s.setLLM)
 	mux.HandleFunc("POST /api/llm/test", s.testLLM)
+	mux.HandleFunc("POST /api/llm/oauth/start", s.startLLMOAuth)
+	mux.HandleFunc("GET /api/llm/oauth/callback", s.llmOAuthCallback)
+	mux.HandleFunc("GET /api/llm/oauth/status", s.llmOAuthStatus)
+	mux.HandleFunc("POST /api/llm/oauth/disconnect", s.disconnectLLMOAuth)
 
 	// asset system
 	mux.HandleFunc("GET /api/assets", s.listAssets)
@@ -1488,6 +1527,22 @@ func (s *Server) testLLM(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, 400, err.Error())
 		return
+	}
+	if req.ProfileID != nil {
+		if p, err := s.m.pg.ProfileByID(*req.ProfileID); err == nil && p != nil && p.AuthType == db.LLMAuthChatGPTOAuth {
+			prov, cfg, ok := s.providerForProfile(*req.ProfileID)
+			if !ok || !p.OAuthConnected {
+				writeJSON(w, 200, map[string]any{"ok": false, "error": "먼저 ChatGPT 계정을 연결해 주세요"})
+				return
+			}
+			lat, reply, err := agent.TestProviderConnection(r.Context(), cfg, prov)
+			if err != nil {
+				writeJSON(w, 200, map[string]any{"ok": false, "error": err.Error()})
+				return
+			}
+			writeJSON(w, 200, map[string]any{"ok": true, "latency_ms": lat.Milliseconds(), "model": cfg.Model, "reply": truncateReply(reply)})
+			return
+		}
 	}
 	cfg := agent.ConfigFrom(req.Provider, req.Model, req.BaseURL, req.APIKey, req.Proxy)
 	// mirror production: send the SAME thinking params so a provider that rejects the

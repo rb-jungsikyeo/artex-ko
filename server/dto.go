@@ -593,6 +593,10 @@ type LLMProfileDTO struct {
 	Proxy           string  `json:"proxy,omitempty"`
 	Model           string  `json:"model"`
 	APIKeyHint      string  `json:"api_key_hint,omitempty"`
+	AuthType        string  `json:"auth_type"`
+	OAuthConnected  bool    `json:"oauth_connected"`
+	OAuthEmail      string  `json:"oauth_email,omitempty"`
+	OAuthExpiresAt  int64   `json:"oauth_expires_at,omitempty"`
 	RatePerSecond   float64 `json:"rate_per_second"`
 	RatePerMinute   float64 `json:"rate_per_minute"`
 	ContextWindowK  int     `json:"context_window_k"`
@@ -628,6 +632,10 @@ func llmProfileDTO(p *db.LLMProfile) LLMProfileDTO {
 		Proxy:            p.Proxy,
 		Model:            p.Model,
 		APIKeyHint:       p.APIKeyHint,
+		AuthType:         p.AuthType,
+		OAuthConnected:   p.OAuthConnected,
+		OAuthEmail:       p.OAuthEmail,
+		OAuthExpiresAt:   p.OAuthExpiresAt,
 		RatePerSecond:    p.RatePerSecond,
 		RatePerMinute:    p.RatePerMinute,
 		ContextWindowK:   p.ContextWindowK,

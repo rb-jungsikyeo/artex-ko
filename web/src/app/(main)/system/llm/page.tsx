@@ -260,6 +260,7 @@ function ProfileSheet({
   const t = useTranslations("llmPage");
   const isNew = !profile;
   const [name, setName] = React.useState("");
+  const [authType, setAuthType] = React.useState<"api_key" | "chatgpt_oauth">("api_key");
   const [format, setFormat] = React.useState<"anthropic" | "openai" | "openai-responses">("anthropic");
   const [model, setModel] = React.useState("");
   const [baseUrl, setBaseUrl] = React.useState("");
@@ -283,6 +284,7 @@ function ProfileSheet({
   const [models, setModels] = React.useState<string[]>([]);
   const [loadingModels, setLoadingModels] = React.useState(false);
   const [modelsOpen, setModelsOpen] = React.useState(false);
+  const [oauthBusy, setOAuthBusy] = React.useState(false);
 
   // 思考开关 / 上限字段名 / 思考强度三组选项的标签走 i18n，故在组件内按当前语言构造。
   const THINKING_TYPES: { value: string; label: string }[] = [
@@ -308,6 +310,7 @@ function ProfileSheet({
   React.useEffect(() => {
     if (!open) return;
     setName(profile?.name ?? "");
+    setAuthType(profile?.auth_type === "chatgpt_oauth" ? "chatgpt_oauth" : "api_key");
     setFormat(profile?.format === "openai" || profile?.format === "openai-responses" ? profile.format : "anthropic");
     setModel(profile?.model ?? "");
     setBaseUrl(profile?.base_url ?? "");
@@ -331,9 +334,74 @@ function ProfileSheet({
   }, [open, profile]);
 
   const profileId = profile ? Number(profile.id) : undefined;
+  const isOAuth = authType === "chatgpt_oauth";
+
+  React.useEffect(() => {
+    if (!isOAuth) return;
+    setFormat("openai-responses");
+    setBaseUrl("https://api.openai.com/v1");
+    setStreaming(true);
+    setMaxTokens("0");
+    setMaxTokensField(NONE);
+    setThinkingType(NONE);
+    setSessionHeaderKey("");
+  }, [isOAuth]);
+
+  async function connectChatGPT() {
+    if (!profileId || oauthBusy) {
+      if (!profileId) toast.error("먼저 모델 설정을 저장한 뒤 ChatGPT 계정을 연결해 주세요.");
+      return;
+    }
+    const popup = window.open("about:blank", "artex-siwc", "popup,width=560,height=760");
+    if (!popup) {
+      toast.error("브라우저가 로그인 창을 차단했습니다. 팝업을 허용한 뒤 다시 시도해 주세요.");
+      return;
+    }
+    setOAuthBusy(true);
+    try {
+      const started = await api.startLLMOAuth(profileId);
+      popup.location.href = started.authorization_url;
+      const deadline = Date.now() + 10 * 60_000;
+      while (Date.now() < deadline) {
+        await new Promise((resolve) => window.setTimeout(resolve, 1000));
+        const status = await api.llmOAuthStatus(started.state);
+        if (!status.done) continue;
+        if (status.error) throw new Error(status.error);
+        toast.success("ChatGPT 계정을 연결했습니다.");
+        onSaved(String(profileId));
+        onOpenChange(false);
+        return;
+      }
+      throw new Error("로그인 시간이 초과되었습니다");
+    } catch (e) {
+      if (!popup.closed) popup.close();
+      toast.error(`ChatGPT 연결 실패: ${(e as Error).message}`);
+    } finally {
+      setOAuthBusy(false);
+    }
+  }
+
+  async function disconnectChatGPT() {
+    if (!profileId || oauthBusy) return;
+    setOAuthBusy(true);
+    try {
+      await api.disconnectLLMOAuth(profileId);
+      toast.success("ChatGPT 연결을 해제했습니다.");
+      onSaved(String(profileId));
+      onOpenChange(false);
+    } catch (e) {
+      toast.error(`연결 해제 실패: ${(e as Error).message}`);
+    } finally {
+      setOAuthBusy(false);
+    }
+  }
 
   async function loadModels() {
     if (loadingModels) return;
+    if (isOAuth && (!profileId || !profile?.oauth_connected)) {
+      toast.error("모델 목록을 불러오려면 먼저 설정을 저장하고 ChatGPT 계정을 연결해 주세요.");
+      return;
+    }
     setLoadingModels(true);
     setModels([]);
     try {
@@ -354,6 +422,10 @@ function ProfileSheet({
 
   async function testConnection() {
     if (testing) return;
+    if (isOAuth && (!profileId || !profile?.oauth_connected)) {
+      toast.error("연결 테스트 전에 ChatGPT 계정을 연결해 주세요.");
+      return;
+    }
     setTesting(true);
     try {
       // 用配置实际会跑的思考参数来测，这样不支持该字段的模型在这里就失败，
@@ -394,20 +466,21 @@ function ProfileSheet({
       const { id } = await api.saveLLMProfile({
         ...(profile ? { id: Number(profile.id) } : {}),
         name: name.trim(),
-        format,
+        auth_type: authType,
+        format: isOAuth ? "openai-responses" : format,
         model: model.trim(),
-        base_url: baseUrl.trim(),
+        base_url: isOAuth ? "https://api.openai.com/v1" : baseUrl.trim(),
         proxy: proxy.trim(),
-        api_key: apiKey,
+        api_key: isOAuth ? "" : apiKey,
         rate_per_second: Number(rps) || 0,
         rate_per_minute: Number(rpm) || 0,
         context_window_k: Number(cw) || 0,
-        thinking_type: toStore(thinkingType),
+        thinking_type: isOAuth ? "" : toStore(thinkingType),
         reasoning_effort: toStore(effort),
         priority: Number(priority) || 0,
         pool_exclude: poolExclude,
-        streaming,
-        max_tokens: Math.max(0, Number(maxTokens) || 0),
+        streaming: isOAuth ? true : streaming,
+        max_tokens: isOAuth ? 0 : Math.max(0, Number(maxTokens) || 0),
         // 字段名开关只对 openai(Chat Completions) 有意义，其它格式一律回落到默认；
         // 后端也会再做一次同样的归一化，这里只是别让 UI 送出自相矛盾的值。
         max_tokens_field: format === "openai" ? toStore(maxTokensField) : "",
@@ -444,6 +517,62 @@ function ProfileSheet({
         </SheetHeader>
 
         <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-4 pb-4">
+          <div className="grid gap-2">
+            <Label>인증 방식</Label>
+            <Select value={authType} onValueChange={(v) => setAuthType(v as "api_key" | "chatgpt_oauth")}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="api_key">공급자 API 키</SelectItem>
+                <SelectItem value="chatgpt_oauth">ChatGPT 계정으로 연결</SelectItem>
+              </SelectContent>
+            </Select>
+            {isOAuth && (
+              <div className="grid gap-3 rounded-lg border border-emerald-500/30 bg-emerald-500/5 p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-sm">ChatGPT로 로그인</p>
+                    <p className="text-muted-foreground text-xs">
+                      API 키 대신 ChatGPT 플랜 한도로 OpenAI 응답 API를 사용합니다.
+                    </p>
+                  </div>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      profile?.oauth_connected ? "border-emerald-500/50 text-emerald-600" : "text-muted-foreground",
+                    )}
+                  >
+                    {profile?.oauth_connected ? "연결됨" : "연결 안 됨"}
+                  </Badge>
+                </div>
+                {profile?.oauth_connected && profile.oauth_email && (
+                  <p className="font-mono text-xs">{profile.oauth_email}</p>
+                )}
+                <div className="flex gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={connectChatGPT}
+                    disabled={!profileId || oauthBusy}
+                  >
+                    {oauthBusy ? <Loader2Icon className="animate-spin" /> : <PlugZapIcon />}
+                    {profile?.oauth_connected ? "다시 연결" : "ChatGPT로 계속"}
+                  </Button>
+                  {profile?.oauth_connected && (
+                    <Button type="button" variant="ghost" size="sm" onClick={disconnectChatGPT} disabled={oauthBusy}>
+                      연결 해제
+                    </Button>
+                  )}
+                </div>
+                {!profileId && (
+                  <p className="text-muted-foreground text-xs">먼저 이 설정을 저장한 뒤 연결할 수 있습니다.</p>
+                )}
+              </div>
+            )}
+          </div>
+
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="grid gap-2">
               <Label htmlFor="p-name">{t("profile.name.label")}</Label>
@@ -456,7 +585,11 @@ function ProfileSheet({
             </div>
             <div className="grid gap-2">
               <Label>{t("profile.format.label")}</Label>
-              <Select value={format} onValueChange={(v) => setFormat(v as "anthropic" | "openai" | "openai-responses")}>
+              <Select
+                value={format}
+                onValueChange={(v) => setFormat(v as "anthropic" | "openai" | "openai-responses")}
+                disabled={isOAuth}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder={t("profile.format.placeholder")} />
                 </SelectTrigger>
@@ -524,6 +657,7 @@ function ProfileSheet({
               placeholder="https://api.openai.com/v1"
               value={baseUrl}
               onChange={(e) => setBaseUrl(e.target.value)}
+              disabled={isOAuth}
             />
           </div>
 
@@ -553,16 +687,18 @@ function ProfileSheet({
             </p>
           </div>
 
-          <div className="grid gap-2">
-            <Label htmlFor="p-api-key">API 키</Label>
-            <Input
-              id="p-api-key"
-              type="password"
-              placeholder={keyHint ? t("profile.apiKey.placeholderSet", { hint: keyHint }) : "sk-…"}
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-            />
-          </div>
+          {!isOAuth && (
+            <div className="grid gap-2">
+              <Label htmlFor="p-api-key">API 키</Label>
+              <Input
+                id="p-api-key"
+                type="password"
+                placeholder={keyHint ? t("profile.apiKey.placeholderSet", { hint: keyHint }) : "sk-…"}
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+              />
+            </div>
+          )}
 
           <div className="grid gap-4 sm:grid-cols-3">
             <div className="grid gap-2">
@@ -616,7 +752,12 @@ function ProfileSheet({
                 <Label className="text-sm">{t("profile.streaming.label")}</Label>
                 <p className="text-muted-foreground text-xs">{t("profile.streaming.hint")}</p>
               </div>
-              <Switch checked={streaming} onCheckedChange={setStreaming} aria-label={t("profile.streaming.aria")} />
+              <Switch
+                checked={isOAuth ? true : streaming}
+                onCheckedChange={setStreaming}
+                disabled={isOAuth}
+                aria-label={t("profile.streaming.aria")}
+              />
             </div>
           </div>
 
@@ -633,8 +774,9 @@ function ProfileSheet({
                 type="number"
                 min={0}
                 className="w-28 shrink-0"
-                value={maxTokens}
+                value={isOAuth ? "0" : maxTokens}
                 onChange={(e) => setMaxTokens(e.target.value)}
+                disabled={isOAuth}
                 placeholder="0"
               />
             </div>
@@ -668,7 +810,7 @@ function ProfileSheet({
                 <Label className="text-sm">{t("profile.thinkingType.label")}</Label>
                 <p className="text-muted-foreground text-xs">{t("profile.thinkingType.hint")}</p>
               </div>
-              <Select value={thinkingType} onValueChange={setThinkingType}>
+              <Select value={thinkingType} onValueChange={setThinkingType} disabled={isOAuth}>
                 <SelectTrigger className="w-32 shrink-0">
                   <SelectValue />
                 </SelectTrigger>
@@ -705,7 +847,11 @@ function ProfileSheet({
         </div>
 
         <div className="flex gap-2 border-t px-4 py-3">
-          <Button variant="outline" onClick={testConnection} disabled={testing}>
+          <Button
+            variant="outline"
+            onClick={testConnection}
+            disabled={testing || (isOAuth && (!profileId || !profile?.oauth_connected))}
+          >
             {testing ? <Loader2Icon className="animate-spin" /> : <PlugZapIcon />}
             {testing ? t("profile.testing") : t("profile.testConnection")}
           </Button>
@@ -739,11 +885,13 @@ export default function LLMPage() {
   // 一个配置在卡片上显示的「是否正常」。没填 Key 的配置根本发不出请求，比熔断更该先说。
   const healthOf = React.useCallback(
     (p: LLMProfile, m?: LLMPoolMember): Health => {
-      if (!p.api_key_hint) {
+      const credentialReady = p.auth_type === "chatgpt_oauth" ? !!p.oauth_connected : !!p.api_key_hint;
+      if (!credentialReady) {
         return {
-          label: t("health.noKey.label"),
+          label: p.auth_type === "chatgpt_oauth" ? "연결 필요" : t("health.noKey.label"),
           cls: "border-muted-foreground/40 text-muted-foreground",
-          hint: t("health.noKey.hint"),
+          hint:
+            p.auth_type === "chatgpt_oauth" ? "이 설정을 열어 ChatGPT 계정을 연결해 주세요." : t("health.noKey.hint"),
         };
       }
       if (m?.state === "tripped") {
@@ -855,7 +1003,6 @@ export default function LLMPage() {
             {profiles.map((p) => {
               const h = healthOf(p, health.get(p.id));
               return (
-                // biome-ignore lint/a11y/useSemanticElements: 卡片内含自己的操作按钮，用原生 <button> 会造成按钮嵌套（非法 HTML）
                 <Card
                   key={p.id}
                   role="button"
@@ -884,7 +1031,7 @@ export default function LLMPage() {
                         <div className="flex flex-wrap items-center gap-2">
                           <span className="truncate font-medium text-sm">{p.name}</span>
                           <Badge variant="outline" className="uppercase">
-                            {p.format}
+                            {p.auth_type === "chatgpt_oauth" ? "ChatGPT 연결" : p.format}
                           </Badge>
                           <Badge variant="outline" className={cn("ml-auto", h.cls)} title={h.hint}>
                             {h.label}
@@ -896,6 +1043,7 @@ export default function LLMPage() {
 
                     <div className="flex flex-wrap gap-x-3 gap-y-0.5 pl-6 text-muted-foreground text-xs">
                       {p.api_key_hint && <span>{p.api_key_hint}</span>}
+                      {p.auth_type === "chatgpt_oauth" && p.oauth_email && <span>{p.oauth_email}</span>}
                       <span>
                         초당 {p.rate_per_second}회 · 분당 {p.rate_per_minute}회
                       </span>
@@ -922,7 +1070,9 @@ export default function LLMPage() {
                         size="sm"
                         variant="outline"
                         className="flex-1"
-                        disabled={p.is_default}
+                        disabled={
+                          p.is_default || (p.auth_type === "chatgpt_oauth" ? !p.oauth_connected : !p.api_key_hint)
+                        }
                         onClick={(e) => {
                           e.stopPropagation();
                           void activate(p.id, p.name);
